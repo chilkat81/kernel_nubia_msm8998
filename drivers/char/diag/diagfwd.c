@@ -953,6 +953,7 @@ int diag_process_apps_pkt(unsigned char *buf, int len, int pid)
 	struct diag_cmd_reg_entry_t *temp_entry = NULL;
 	struct diag_cmd_reg_t *reg_item = NULL;
 	struct diag_md_session_t *info = NULL;
+	int ntype = 0;
 
 	if (!buf || len <= 0)
 		return -EIO;
@@ -988,6 +989,11 @@ int diag_process_apps_pkt(unsigned char *buf, int len, int pid)
 			entry.cmd_code_hi);
 	}
 
+	ntype = nubia_diag_get_ftm_type(&entry);
+    if(ntype != 0){
+    	pr_err("diag: In %s, received FTM debug cmd %s\n", __func__, (ntype == 1) ? " wireless " : " wifi ");
+    }
+	
 	if ((len >= sizeof(uint8_t)) && *buf == DIAG_CMD_LOG_ON_DMND &&
 		driver->log_on_demand_support &&
 	    driver->feature[PERIPHERAL_MODEM].rcvd_feature_mask) {
@@ -996,6 +1002,9 @@ int diag_process_apps_pkt(unsigned char *buf, int len, int pid)
 						   DIAG_MAX_RSP_SIZE);
 		if (write_len > 0)
 			diag_send_rsp(driver->apps_rsp_buf, write_len, pid);
+            if(ntype != 0){
+            	pr_err("diag: In %s, received FTM debug cmd %s DIAG_CMD_LOG_ON_DMND\n", __func__, (ntype == 1) ? " wireless " : " wifi ");
+            }
 		return 0;
 	}
 
@@ -1085,6 +1094,20 @@ int diag_process_apps_pkt(unsigned char *buf, int len, int pid)
 		/* Not required, represents that command isnt sent to modem */
 		return 0;
 	}
+#ifdef CONFIG_NUBIA_DIAG_REBOOT_CMD
+    	/* Check for reboot command */
+	else if (chk_apps_master() && (*buf == 0x29) && (*(buf+1) == 0x02) && (*(buf+2) == 0x00)) {
+		/* send response back */
+		//driver->apps_rsp_buf[0] = *buf;
+		memcpy(driver->apps_rsp_buf,buf,3);
+		diag_send_rsp(driver->apps_rsp_buf, 1, pid);
+		msleep(5000);
+		printk(KERN_CRIT "diag: reboot set, Rebooting SoC..\n");
+		kernel_restart(NULL);
+		/* Not required, represents that command isnt sent to modem */
+		return 0;
+	}
+#endif
 	/* Check for polling for Apps only DIAG */
 	else if ((len >= (3 * sizeof(uint8_t))) &&
 		(*buf == 0x4b) && (*(buf+1) == 0x32) && (*(buf+2) == 0x03)) {
@@ -1953,3 +1976,27 @@ void diagfwd_exit(void)
 	kfree(driver->user_space_data_buf);
 	destroy_workqueue(driver->diag_wq);
 }
+
+#define NUBIA_DIAG_FTM_NONE_TYPE 0
+#define NUBIA_DIAG_FTM_WIRELESS_TYPE 1
+#define NUBIA_DIAG_FTM_WIFI_TYPE 2
+int nubia_diag_get_ftm_type(struct diag_cmd_reg_entry_t *entry){
+    int type = NUBIA_DIAG_FTM_NONE_TYPE;
+    if((entry->cmd_code == 0x4b && entry->subsys_id == 0xfa && entry->cmd_code_hi == 0x06)){
+        type = NUBIA_DIAG_FTM_WIRELESS_TYPE;
+    }else if((entry->cmd_code == 0x4b && entry->subsys_id ==0x0b && entry->cmd_code_hi == 0x16)){
+        type = NUBIA_DIAG_FTM_WIFI_TYPE;
+    }
+    return type;
+}
+
+int nubia_diag_get_ftm_type_reg(struct diag_cmd_reg_entry_t *entry){
+    int type = NUBIA_DIAG_FTM_NONE_TYPE;
+    if((entry->cmd_code == 0xff && entry->subsys_id == 0xfa && entry->cmd_code_hi == 0x06)){
+        type = NUBIA_DIAG_FTM_WIRELESS_TYPE;
+    }else if((entry->cmd_code == 0xff && entry->subsys_id ==0x0b && entry->cmd_code_hi == 0x16)){
+        type = NUBIA_DIAG_FTM_WIFI_TYPE;
+    }
+    return type;
+}
+

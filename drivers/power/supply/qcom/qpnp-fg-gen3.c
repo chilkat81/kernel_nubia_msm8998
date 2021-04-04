@@ -1165,6 +1165,19 @@ static void fg_notify_charger(struct fg_chip *chip)
 		return;
 	}
 
+#if defined(CONFIG_NUBIA_HW_STEP_CHARGE_FEATURE)
+	if( strstr(chip->bp.batt_type_str, "step") != NULL ){
+		prop.intval = 1;
+		rc = power_supply_set_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_STEP_CHARGING_ENABLED, &prop);
+		if (rc < 0) {
+			pr_err("Error in setting step charging enable property on batt_psy, rc=%d\n",
+				rc);
+			return;
+		}
+	}
+#endif
+
 	fg_dbg(chip, FG_STATUS, "Notified charger on float voltage and FCC\n");
 }
 

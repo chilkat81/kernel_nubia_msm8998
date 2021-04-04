@@ -110,6 +110,23 @@ static void msm_actuator_parse_i2c_params(struct msm_actuator_ctrl_t *a_ctrl,
 	write_arr = a_ctrl->reg_tbl;
 	i2c_tbl = a_ctrl->i2c_reg_tbl;
 
+      //ZTEMT: fuyipeng modify for AK7371 ----start
+      //Must write high 8 bits first, dafault as the first register, otherwise, should change their order
+      if (strncmp(a_ctrl->act_name, "ak7371", strlen("ak7371")) == 0 && size == 2)
+      {
+          i2c_tbl[0].reg_addr = write_arr[0].reg_addr;
+          i2c_tbl[0].delay = delay;
+          i2c_tbl[0].reg_data = ((next_lens_position << write_arr[0].data_shift) & 0xFF00) >> 8;
+
+          i2c_tbl[1].reg_addr = write_arr[1].reg_addr;
+          i2c_tbl[1].delay = delay;
+          i2c_tbl[1].reg_data=(next_lens_position << write_arr[1].data_shift) & 0xFF;
+
+          a_ctrl->i2c_tbl_index = 2;
+          return;
+      }
+      //ZTEMT: fuyipeng modify for AK7371 ----end
+
 	for (i = 0; i < size; i++) {
 		if (write_arr[i].reg_write_type == MSM_ACTUATOR_WRITE_DAC) {
 			value = (next_lens_position <<
@@ -826,6 +843,14 @@ static int32_t msm_actuator_park_lens(struct msm_actuator_ctrl_t *a_ctrl)
 	uint16_t next_lens_pos = 0;
 	struct msm_camera_i2c_reg_setting reg_setting;
 
+	
+    //ztemt: fyc add for avoiding other project enter this function
+    if(strcmp(a_ctrl->act_name,"dw9718s") != 0) //actuator_name is "dw9718s"
+    {
+        return 0;
+    }
+    //ztemt: fyc add for avoiding other project enter this function
+    
 	a_ctrl->i2c_tbl_index = 0;
 	if ((a_ctrl->curr_step_pos > a_ctrl->total_steps) ||
 		(!a_ctrl->park_lens.max_step) ||
@@ -1186,6 +1211,7 @@ static int32_t msm_actuator_set_position(
 	uint16_t next_lens_position;
 	uint16_t delay;
 	uint32_t hw_params = 0;
+  	int  step_boundary  = 0;//jixd add for reset optimize
 	struct msm_camera_i2c_reg_setting reg_setting;
 	CDBG("%s Enter %d\n", __func__, __LINE__);
 	if (set_pos->number_of_steps <= 0 ||
@@ -1209,8 +1235,23 @@ static int32_t msm_actuator_set_position(
 
 	a_ctrl->i2c_tbl_index = 0;
 	hw_params = set_pos->hw_params;
+	step_boundary = a_ctrl->region_params[0].step_bound[MOVE_NEAR];//jixd add for reset optimize
 	for (index = 0; index < set_pos->number_of_steps; index++) {
-		next_lens_position = set_pos->pos[index];
+		//jixd add for reset optimize ---start
+		if(set_pos->use_dac_value)
+		{
+			next_lens_position = set_pos->pos[index];
+		}
+		else
+		{
+			if(set_pos->pos[index] < 0 || (set_pos->pos[index] > step_boundary -1))
+			{
+				break;
+			}
+			next_lens_position = a_ctrl->step_position_table[set_pos->pos[index]];
+
+		}
+		//jixd add for reset optimize ---end
 		delay = set_pos->delay[index];
 		a_ctrl->func_tbl->actuator_parse_i2c_params(a_ctrl,
 			next_lens_position, hw_params, delay);
@@ -1228,6 +1269,7 @@ static int32_t msm_actuator_set_position(
 			return rc;
 		}
 		a_ctrl->i2c_tbl_index = 0;
+		set_pos->dac_output = next_lens_position;//jixd add for reset optimize
 	}
 	CDBG("%s exit %d\n", __func__, __LINE__);
 	return rc;
@@ -1468,6 +1510,18 @@ static int32_t msm_actuator_config(struct msm_actuator_ctrl_t *a_ctrl,
 		if (rc < 0)
 			pr_err("init table failed %d\n", rc);
 		break;
+
+		// ZTEMT: fuyipeng add for manual AF -----start
+		case CFG_SET_ACTUATOR_NAME:
+			if (NULL != cdata->cfg.act_name)
+			{
+				memcpy(a_ctrl->act_name, cdata->cfg.act_name, sizeof(a_ctrl->act_name));
+				pr_err("CFG_SET_ACTUATOR_NAME ---act_name:%s \n", a_ctrl->act_name);
+				rc = 0;
+			}
+
+			break;
+		// ZTEMT: fuyipeng add for manual AF -----end
 
 	case CFG_SET_DEFAULT_FOCUS:
 		if (a_ctrl->func_tbl &&
@@ -1714,6 +1768,16 @@ static long msm_actuator_subdev_do_ioctl(
 
 			parg = &actuator_data;
 			break;
+
+			// ZTEMT: fuypeng add for manual AF -----start
+			case  CFG_SET_ACTUATOR_NAME:
+				actuator_data.cfgtype = u32->cfgtype;
+				memcpy(actuator_data.cfg.act_name, u32->cfg.act_name, sizeof(u32->cfg.act_name));
+				parg = &actuator_data;
+
+				break;
+			// ZTEMT: fuyipeng add for manual AF -----end
+
 		case CFG_SET_DEFAULT_FOCUS:
 		case CFG_MOVE_FOCUS:
 			actuator_data.cfgtype = u32->cfgtype;
@@ -1747,10 +1811,10 @@ static long msm_actuator_subdev_do_ioctl(
 			parg = &actuator_data;
 			break;
 		}
-		break;
+	/*	break;
 	case VIDIOC_MSM_ACTUATOR_CFG:
 		pr_err("%s: invalid cmd 0x%x received\n", __func__, cmd);
-		return -EINVAL;
+		return -EINVAL;*/
 	}
 
 	rc = msm_actuator_subdev_ioctl(sd, cmd, parg);
